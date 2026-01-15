@@ -1,5 +1,3 @@
-import os
-
 import pytest
 from tenacity import retry
 from tenacity import retry_if_exception_type
@@ -9,6 +7,7 @@ from tenacity import wait_exponential
 from onyx.natural_language_processing.search_nlp_models import EmbeddingModel
 from shared_configs.enums import EmbedTextType
 from shared_configs.model_server_models import EmbeddingProvider
+from tests.utils import SecretName
 
 VALID_SAMPLE = ["hi", "hello my name is bob", "woah there!!!. 😃"]
 VALID_LONG_SAMPLE = ["hi " * 999]
@@ -27,7 +26,7 @@ def _run_embeddings(
 
 
 @pytest.fixture
-def openai_embedding_model() -> EmbeddingModel:
+def openai_embedding_model(test_secrets: dict[SecretName, str]) -> EmbeddingModel:
     return EmbeddingModel(
         server_host="localhost",
         server_port=9000,
@@ -35,7 +34,7 @@ def openai_embedding_model() -> EmbeddingModel:
         normalize=True,
         query_prefix=None,
         passage_prefix=None,
-        api_key=os.environ["OPENAI_API_KEY"],
+        api_key=test_secrets[SecretName.OPENAI_API_KEY],
         provider_type=EmbeddingProvider.OPENAI,
         api_url=None,
     )
@@ -47,7 +46,7 @@ def test_openai_embedding(openai_embedding_model: EmbeddingModel) -> None:
 
 
 @pytest.fixture
-def cohere_embedding_model() -> EmbeddingModel:
+def cohere_embedding_model(test_secrets: dict[SecretName, str]) -> EmbeddingModel:
     return EmbeddingModel(
         server_host="localhost",
         server_port=9000,
@@ -55,7 +54,7 @@ def cohere_embedding_model() -> EmbeddingModel:
         normalize=True,
         query_prefix=None,
         passage_prefix=None,
-        api_key=os.environ["COHERE_API_KEY"],
+        api_key=test_secrets[SecretName.COHERE_API_KEY],
         provider_type=EmbeddingProvider.COHERE,
         api_url=None,
     )
@@ -87,7 +86,7 @@ def test_local_nomic_embedding(local_nomic_embedding_model: EmbeddingModel) -> N
 
 
 @pytest.fixture
-def azure_embedding_model() -> EmbeddingModel:
+def azure_embedding_model(test_secrets: dict[SecretName, str]) -> EmbeddingModel:
     return EmbeddingModel(
         server_host="localhost",
         server_port=9000,
@@ -95,9 +94,9 @@ def azure_embedding_model() -> EmbeddingModel:
         normalize=True,
         query_prefix=None,
         passage_prefix=None,
-        api_key=os.environ["AZURE_API_KEY"],
+        api_key=test_secrets[SecretName.AZURE_API_KEY],
         provider_type=EmbeddingProvider.AZURE,
-        api_url=os.environ["AZURE_API_URL"],
+        api_url=test_secrets[SecretName.AZURE_API_URL],
     )
 
 
