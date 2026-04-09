@@ -76,6 +76,10 @@ export interface Settings {
   // Factory defaults for the restore button.
   default_user_file_max_upload_size_mb?: number;
   default_file_token_count_threshold_k?: number;
+
+  // True when the backend runs inside a container (Docker/Podman).
+  // Used to default local-service URLs to host.docker.internal.
+  is_containerized?: boolean;
 }
 
 export enum NotificationType {
