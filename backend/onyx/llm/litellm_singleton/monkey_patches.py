@@ -58,10 +58,6 @@ Status checked against LiteLLM v1.83.0 (2026-03-31):
    NOTE: In v1.83.0, this method also handles ResponseIncompleteEvent and
          ResponseFailedEvent. Our patch only handles ResponseCompletedEvent and
          returns None for the new types, which is acceptable.
-
-7. Responses API metadata=None TypeError (REMOVED):
-   - FIXED UPSTREAM in v1.83.0 — all occurrences now use
-     `kwargs.get("metadata") or {}`. Patch removed.
 """
 
 import time
@@ -415,7 +411,7 @@ def _patch_openai_responses_transform_response() -> None:
                                     if hasattr(choice, "message") and hasattr(
                                         choice.message, "reasoning_content"
                                     ):
-                                        choice.message.reasoning_content = combined_text  # ty: ignore[invalid-assignment]
+                                        choice.message.reasoning_content = combined_text
                     break  # Only process the first reasoning item
 
         return result
