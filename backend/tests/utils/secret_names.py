@@ -1,53 +1,43 @@
 """
-Secret name and environment constants.
+Secret name enums for test secrets.
+
+Each AWS Secrets Manager environment gets its own enum class. The environment
+is derived from the enum type when fetching, so the type checker ensures you
+can't mix secrets from different environments in a single batch call.
 
 Usage:
-    from tests.utils import SecretName, Environment, get_secrets
+    from tests.utils import TestSecret, get_secrets
 
-    secrets = get_secrets(
-        [SecretName.OPENAI_API_KEY, SecretName.COHERE_API_KEY],
-        environment=Environment.TEST,
-    )
+    secrets = get_secrets([TestSecret.OPENAI_API_KEY, TestSecret.COHERE_API_KEY])
 """
 
 from enum import StrEnum
 
 
-class Environment(StrEnum):
-    """
-    Secret environments.
+class TestSecret(StrEnum):
+    """Secrets available in the test environment (AWS prefix: ``test/``)."""
 
-    Each environment maps to an AWS Secrets Manager prefix.
-    Environments allow the same logical secret name to have different
-    values and permissions in different contexts.
-    """
-
-    TEST = "test"
-    DEPLOY = "deploy"
-
-    @property
-    def prefix(self) -> str:
-        return f"{self.value}/"
-
-
-class SecretName(StrEnum):
-    """
-    Secret names.
-
-    Use these constants when requesting secrets to avoid typos and enable
-    IDE autocompletion and type checking.
-    """
-
-    # OpenAI
     OPENAI_API_KEY = "OPENAI_API_KEY"
-
-    # Cohere
     COHERE_API_KEY = "COHERE_API_KEY"
-
-    # Azure OpenAI
     AZURE_API_KEY = "AZURE_API_KEY"
     AZURE_API_URL = "AZURE_API_URL"
-
-    # LiteLLM
     LITELLM_API_KEY = "LITELLM_API_KEY"
     LITELLM_API_URL = "LITELLM_API_URL"
+
+    @classmethod
+    def aws_prefix(cls) -> str:
+        return "test/"
+
+
+class DeploySecret(StrEnum):
+    """Secrets available in the deploy environment (AWS prefix: ``deploy/``).
+
+    Add members here when deploy-scoped secrets are needed.
+    """
+
+    @classmethod
+    def aws_prefix(cls) -> str:
+        return "deploy/"
+
+
+AnySecret = TestSecret | DeploySecret

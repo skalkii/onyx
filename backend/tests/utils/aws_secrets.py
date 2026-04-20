@@ -6,61 +6,59 @@ Secrets are resolved in order:
     2. .env file at the repo root (loaded via dotenv)
     3. AWS Secrets Manager (batch fetch for any remaining keys)
 
+The AWS environment (prefix) is derived from the enum type passed in, so
+mixing ``TestSecret`` and ``DeploySecret`` values in one call is rejected
+by the type checker.
+
 Usage:
-    In conftest.py, set up a session-scoped fixture:
+    In conftest.py, set up a session-scoped fixture driven by the
+    ``@pytest.mark.secrets(...)`` markers collected from tests:
 
         @pytest.fixture(scope="session")
-        def test_secrets() -> dict[SecretName, str]:
-            return get_secrets(
-                [SecretName.OPENAI_API_KEY, SecretName.COHERE_API_KEY],
-                environment=Environment.TEST,
-            )
+        def test_secrets(request) -> dict[TestSecret, str]:
+            needed = getattr(request.config, "_onyx_test_secrets_needed", set())
+            return get_secrets(sorted(needed, key=lambda s: s.value))
 
-    Then use in test fixtures:
+    Then in a test module:
 
-        @pytest.fixture
-        def openai_client(test_secrets: dict[SecretName, str]) -> OpenAI:
-            return OpenAI(api_key=test_secrets[SecretName.OPENAI_API_KEY])
+        @pytest.mark.secrets(TestSecret.OPENAI_API_KEY)
+        def test_openai(openai_client): ...
 
 Configuration via OS environment variables:
     - AWS_REGION: AWS region for Secrets Manager (default: "us-east-1")
 
 AWS SSO Authentication:
     boto3 automatically uses SSO credentials if configured in ~/.aws/config.
-    Run `aws sso login` to authenticate before running tests.
+    Run ``aws sso login`` to authenticate before running tests.
 """
 
 import logging
 import os
+from collections.abc import Sequence
+from typing import cast
+from typing import overload
 
 from dotenv import dotenv_values
 
-from tests.utils.secret_names import Environment
-from tests.utils.secret_names import SecretName
+from tests.utils.secret_names import AnySecret
+from tests.utils.secret_names import DeploySecret
+from tests.utils.secret_names import TestSecret
 
 logger = logging.getLogger(__name__)
 
-# AWS Secrets Manager configuration
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-# Path to the .env file used by tests (relative to repo root)
 _DOTENV_PATH = os.path.join(
     os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, ".vscode", ".env"
 )
 
 
-def _get_local_secrets(keys: list[SecretName]) -> dict[SecretName, str]:
-    """
-    Resolve secrets from environment variables and the .env file.
-
-    Checks os.environ first, then falls back to values in .vscode/.env.
-    Returns only the keys that were found locally.
-    """
+def _get_local_secrets(keys: Sequence[AnySecret]) -> dict[AnySecret, str]:
+    """Resolve secrets from ``os.environ`` first, then ``.vscode/.env``."""
     dotenv = dotenv_values(_DOTENV_PATH)
-    found: dict[SecretName, str] = {}
+    found: dict[AnySecret, str] = {}
 
     for key in keys:
-        # os.environ takes precedence
         value = os.environ.get(key.value) or dotenv.get(key.value)
         if value:
             found[key] = value
@@ -69,16 +67,14 @@ def _get_local_secrets(keys: list[SecretName]) -> dict[SecretName, str]:
 
 
 def _get_aws_secrets(
-    keys: list[SecretName],
-    environment: Environment,
-) -> dict[SecretName, str]:
-    """
-    Fetch secrets from AWS Secrets Manager in a single batch request.
-    """
+    keys: Sequence[AnySecret],
+    enum_type: type[AnySecret],
+) -> dict[AnySecret, str]:
+    """Fetch secrets from AWS Secrets Manager in a single batch request."""
     import boto3
     from botocore.exceptions import ClientError
 
-    prefix = environment.prefix
+    prefix = enum_type.aws_prefix()
 
     session = boto3.Session()
     client = session.client(
@@ -86,7 +82,7 @@ def _get_aws_secrets(
         region_name=AWS_REGION,
     )
 
-    secret_ids = [f"{prefix}{name}" for name in keys]
+    secret_ids = [f"{prefix}{name.value}" for name in keys]
 
     try:
         response = client.batch_get_secret_value(SecretIdList=secret_ids)
@@ -107,7 +103,7 @@ def _get_aws_secrets(
                 f"Failed to fetch secrets from AWS Secrets Manager: {e}"
             ) from e
 
-    secrets: dict[SecretName, str] = {}
+    secrets: dict[AnySecret, str] = {}
     for secret in response.get("SecretValues", []):
         secret_id = secret.get("Name", "")
         secret_value = secret.get("SecretString")
@@ -117,9 +113,11 @@ def _get_aws_secrets(
                 secret_id[len(prefix) :] if secret_id.startswith(prefix) else secret_id
             )
             try:
-                secrets[SecretName(key_name)] = secret_value
+                secrets[enum_type(key_name)] = secret_value
             except ValueError:
-                logger.warning(f"Secret '{key_name}' not in SecretName enum, skipping")
+                logger.warning(
+                    f"Secret '{key_name}' not in {enum_type.__name__}, skipping"
+                )
 
     for error in response.get("Errors", []):
         secret_id = error.get("SecretId", "unknown")
@@ -132,28 +130,28 @@ def _get_aws_secrets(
     return secrets
 
 
+@overload
+def get_secrets(keys: list[TestSecret]) -> dict[TestSecret, str]: ...
+@overload
+def get_secrets(keys: list[DeploySecret]) -> dict[DeploySecret, str]: ...
 def get_secrets(
-    keys: list[SecretName],
-    environment: Environment = Environment.TEST,
-) -> dict[SecretName, str]:
-    """
-    Resolve secrets from local sources first, then AWS Secrets Manager.
+    keys: list[TestSecret] | list[DeploySecret],
+) -> dict[TestSecret, str] | dict[DeploySecret, str]:
+    """Resolve secrets from local sources, then AWS Secrets Manager.
 
-    Checks environment variables and .vscode/.env before making any AWS calls.
-    Only keys not found locally are fetched from AWS.
-
-    Args:
-        keys: List of secret names to resolve.
-        environment: The AWS environment to fetch from (default: Environment.TEST).
-
-    Returns:
-        dict: Mapping of SecretName to secret values.
-
-    Raises:
-        RuntimeError: If AWS secrets cannot be fetched due to auth/access issues.
+    The AWS prefix is derived from the enum type of the keys. All keys must
+    belong to the same enum; mixing environments in one call is a programming
+    error (and the type checker will reject it at call sites).
     """
     if not keys:
-        return {}
+        return cast("dict[TestSecret, str]", {})
+
+    enum_type = type(keys[0])
+    if not all(isinstance(k, enum_type) for k in keys):
+        raise ValueError(
+            "All secrets passed to get_secrets() must belong to the same enum "
+            f"(got a mix including {enum_type.__name__})"
+        )
 
     secrets = _get_local_secrets(keys)
 
@@ -161,13 +159,13 @@ def get_secrets(
         local_names = ", ".join(k.value for k in secrets)
         logger.info(f"Resolved {len(secrets)} secret(s) locally: {local_names}")
 
-    remaining: list[SecretName] = [k for k in keys if k not in secrets]
+    remaining: list[AnySecret] = [k for k in keys if k not in secrets]
     if remaining:
-        aws_secrets = _get_aws_secrets(remaining, environment)
+        aws_secrets = _get_aws_secrets(remaining, enum_type)
         secrets.update(aws_secrets)
         logger.info(
             f"Fetched {len(aws_secrets)}/{len(remaining)} secret(s) from AWS "
-            f"(environment: {environment})"
+            f"(prefix: {enum_type.aws_prefix()!r})"
         )
 
-    return secrets
+    return cast("dict[TestSecret, str] | dict[DeploySecret, str]", secrets)
